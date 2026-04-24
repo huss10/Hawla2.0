@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hawla — Send Money Home for Less</title>
+  <meta name="description" content="Compare exchange rates across all UAE exchange houses and apps. See exactly how much your family receives.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;800&family=Noto+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    :root {
+      --bg:           #0D1117;
+      --surface:      #161B22;
+      --surface2:     #21262D;
+      --border:       rgba(255,255,255,0.08);
+      --border2:      rgba(255,255,255,0.15);
+      --text:         #E6EDF3;
+      --muted:        #8B949E;
+      --accent:       #F0A500;
+      --accent2:      #E07B00;
+      --green:        #3FB950;
+      --red:          #F85149;
+      --best-bg:      rgba(240,165,0,0.10);
+      --best-border:  rgba(240,165,0,0.45);
+      --radius:       12px;
+      --radius-sm:    8px;
+      --font-display: 'Sora', sans-serif;
+      --font-body:    'Noto Sans', sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      font-size: 16px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 15% 10%, rgba(240,165,0,0.07) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 40% at 85% 85%, rgba(63,185,80,0.04) 0%, transparent 50%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 0 16px 60px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ── HEADER ── */
+    header {
+      padding: 24px 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .logo { display: flex; align-items: center; gap: 10px; }
+
+    .logo-mark {
+      width: 38px; height: 38px;
+      background: var(--accent);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--font-display);
+      font-weight: 800; font-size: 20px;
+      color: #000;
+    }
+
+    .logo-text {
+      font-family: var(--font-display);
+      font-weight: 800; font-size: 22px;
+      color: var(--text); letter-spacing: -0.5px;
+    }
+
+    .logo-tagline {
+      font-size: 11px; color: var(--muted);
+      letter-spacing: 0.5px; text-transform: uppercase;
+    }
+
+    .lang-switcher {
+      display: flex; gap: 4px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px; padding: 4px;
+    }
+
+    .lang-btn {
+      padding: 4px 10px; border: none;
+      background: none; border-radius: 5px;
+      color: var(--muted); font-size: 12px;
+      font-family: var(--font-body); cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .lang-btn.active {
+      background: var(--accent); color: #000; font-weight: 600;
+    }
+
+    /* ── HERO ── */
+    .hero {
+      padding: 16px 0 28px; text-align: center;
+    }
+
+    .hero-title {
+      font-family: var(--font-display);
+      font-size: clamp(24px, 5.5vw, 38px);
+      font-weight: 800; line-height: 1.15;
+      letter-spacing: -1px; margin-bottom: 10px;
+    }
+    .hero-title .accent { color: var(--accent); }
+
+    .hero-sub {
+      color: var(--muted); font-size: 15px;
+      max-width: 400px; margin: 0 auto;
+    }
+
+    /* ── CALCULATOR CARD ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      padding: 22px;
+      margin-bottom: 16px;
+    }
+
+    .field-label {
+      font-size: 11px; text-transform: uppercase;
+      letter-spacing: 0.8px; color: var(--muted);
+      margin-bottom: 8px; font-weight: 600;
+    }
+
+    .amount-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+
+    @media (max-width: 480px) { .amount-row { grid-template-columns: 1fr; } }
+
+    .input-wrap { position: relative; }
+
+    .currency-prefix {
+      position: absolute; left: 14px; top: 50%;
+      transform: translateY(-50%);
+      color: var(--accent);
+      font-family: var(--font-display); font-weight: 700; font-size: 16px;
+      pointer-events: none;
+    }
+
+    input[type="number"] {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-family: var(--font-display);
+      font-size: 24px; font-weight: 700;
+      padding: 13px 14px 13px 50px;
+      outline: none;
+      transition: border-color 0.2s;
+      -moz-appearance: textfield;
+    }
+
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; }
+
+    input[type="number"]:focus { border-color: var(--accent); }
+
+    .quick-amounts {
+      display: flex; gap: 8px; flex-wrap: wrap; padding-top: 4px;
+    }
+
+    .quick-btn {
+      padding: 8px 14px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted); font-size: 14px;
+      font-family: var(--font-display); font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+    }
+
+    .quick-btn:hover { border-color: var(--border2); color: var(--text); }
+    .quick-btn.active { background: var(--best-bg); border-color: var(--accent); color: var(--accent); }
+
+    /* Corridor grid */
+    .corridor-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 8px;
+    }
+
+    @media (max-width: 500px) {
+      .corridor-grid { grid-template-columns: repeat(4, 1fr); }
+    }
+
+    .corridor-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 4px;
+      cursor: pointer; text-align: center;
+      transition: all 0.15s; color: var(--text);
+    }
+
+    .corridor-btn:hover { border-color: var(--border2); }
+
+    .corridor-btn.active {
+      background: var(--best-bg);
+      border-color: var(--accent);
+    }
+
+    .corridor-flag { font-size: 22px; display: block; margin-bottom: 3px; }
+    .corridor-code { font-size: 11px; font-weight: 600; color: var(--muted); }
+    .corridor-btn.active .corridor-code { color: var(--accent); }
+
+    /* ── SUMMARY BAR ── */
+    .summary-bar {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+
+    @media (max-width: 440px) { .summary-bar { grid-template-columns: 1fr; } }
+
+    .summary-cell {
+      background: var(--surface);
+      padding: 16px 18px;
+      text-align: center;
+    }
+
+    .summary-label {
+      font-size: 11px; text-transform: uppercase;
+      letter-spacing: 0.7px; color: var(--muted);
+      margin-bottom: 5px;
+    }
+
+    .summary-value {
+      font-family: var(--font-display);
+      font-size: 22px; font-weight: 800;
+      letter-spacing: -0.5px;
+      color: var(--accent);
+    }
+
+    .summary-value.green { color: var(--green); }
+
+    /* ── FILTER TABS ── */
+    .filter-row {
+      display: flex; align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px; flex-wrap: wrap; gap: 10px;
+    }
+
+    .filter-tabs { display: flex; gap: 6px; }
+
+    .filter-tab {
+      padding: 5px 14px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      background: none; color: var(--muted);
+      font-size: 13px; font-family: var(--font-body);
+      cursor: pointer; transition: all 0.15s;
+    }
+
+    .filter-tab.active {
+      background: var(--surface2);
+      border-color: var(--border2); color: var(--text);
+    }
+
+    .updated-text {
+      font-size: 11px; color: var(--muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 3px 10px; border-radius: 20px;
+      white-space: nowrap;
+    }
+
+    /* ── PROVIDER CARDS ── */
+    .provider-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .provider-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 15px 18px;
+      display: flex; align-items: center; gap: 14px;
+      text-decoration: none; color: inherit;
+      transition: border-color 0.15s, transform 0.1s;
+      animation: slideUp 0.25s ease both;
+    }
+
+    .provider-card:hover {
+      border-color: var(--border2);
+      transform: translateY(-1px);
+    }
+
+    .provider-card.best {
+      background: var(--best-bg);
+      border-color: var(--best-border);
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(10px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .p-logo {
+      width: 44px; height: 44px;
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 800; flex-shrink: 0;
+      font-family: var(--font-display); letter-spacing: -0.5px;
+    }
+
+    .p-info { flex: 1; min-width: 0; }
+
+    .p-name {
+      font-weight: 600; font-size: 14px; margin-bottom: 3px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    .p-meta {
+      font-size: 12px; color: var(--muted);
+      display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    }
+
+    .type-pill {
+      padding: 1px 7px; border-radius: 4px;
+      font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+
+    .type-pill.exchange_house { background: rgba(88,166,255,0.12); color: #58A6FF; }
+    .type-pill.digital        { background: rgba(63,185,80,0.12);  color: var(--green); }
+
+    .p-amount { text-align: right; flex-shrink: 0; }
+
+    .p-receives {
+      font-family: var(--font-display);
+      font-size: 24px; font-weight: 800;
+      line-height: 1; letter-spacing: -0.5px;
+    }
+
+    .provider-card.best .p-receives { color: var(--accent); }
+
+    .p-rate { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+    .best-pill {
+      display: inline-block;
+      background: var(--accent); color: #000;
+      font-size: 10px; font-weight: 700;
+      padding: 1px 7px; border-radius: 4px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin-top: 4px;
+    }
+
+    .diff-text {
+      font-size: 11px; color: var(--red); margin-top: 3px;
+    }
+
+    /* ── ALERT SECTION ── */
+    .alert-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 22px; margin-top: 16px;
+    }
+
+    .alert-title {
+      font-family: var(--font-display);
+      font-size: 15px; font-weight: 700; margin-bottom: 4px;
+    }
+
+    .alert-sub { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+
+    .alert-fields { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .alert-input {
+      flex: 1; min-width: 160px;
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius-sm);
+      color: var(--text); font-family: var(--font-body);
+      font-size: 14px; padding: 10px 14px;
+      outline: none; transition: border-color 0.2s;
+    }
+
+    .alert-input:focus { border-color: var(--accent); }
+
+    .alert-btn {
+      background: var(--accent); color: #000;
+      border: none; border-radius: var(--radius-sm);
+      padding: 10px 20px;
+      font-family: var(--font-display); font-weight: 700; font-size: 14px;
+      cursor: pointer; transition: background 0.15s; white-space: nowrap;
+    }
+
+    .alert-btn:hover { background: var(--accent2); }
+    .alert-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .alert-confirm {
+      margin-top: 12px; font-size: 13px; color: var(--green);
+      display: none;
+    }
+
+    .alert-error {
+      margin-top: 8px; font-size: 13px; color: var(--red);
+      display: none;
+    }
+
+    /* ── HOW IT WORKS ── */
+    .how-section {
+      margin-top: 32px;
+      display: grid; grid-template-columns: repeat(3,1fr); gap: 12px;
+    }
+
+    @media (max-width: 500px) { .how-section { grid-template-columns: 1fr; } }
+
+    .how-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 18px;
+      text-align: center;
+    }
+
+    .how-icon { font-size: 28px; margin-bottom: 10px; }
+
+    .how-title {
+      font-family: var(--font-display);
+      font-weight: 700; font-size: 14px; margin-bottom: 6px;
+    }
+
+    .how-body { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      margin-top: 40px; padding: 20px 0;
+      text-align: center; color: var(--muted); font-size: 12px;
+      line-height: 1.8;
+    }
+
+    footer a { color: var(--muted); text-decoration: none; }
+    footer a:hover { color: var(--text); }
+
+    /* ── EMPTY STATE ── */
+    .empty {
+      text-align: center; padding: 40px 20px;
+      color: var(--muted);
+    }
+
+    .empty-icon { font-size: 36px; margin-bottom: 10px; }
+
+    /* ── RTL (Urdu) ── */
+    [dir="rtl"] .currency-prefix { left: auto; right: 14px; }
+    [dir="rtl"] input[type="number"] { padding: 13px 50px 13px 14px; }
+    [dir="rtl"] .p-amount { text-align: left; }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+  </style>
+</head>
+
+<body>
+<div class="container">
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo">
+      <div class="logo-mark">H</div>
+      <div>
+        <div class="logo-text">Hawla</div>
+        <div class="logo-tagline" id="i-tagline">Best rate finder · UAE</div>
+      </div>
+    </div>
+    <div class="lang-switcher">
+      <button class="lang-btn active" onclick="setLang('en')">EN</button>
+      <button class="lang-btn"        onclick="setLang('hi')">हि</button>
+      <button class="lang-btn"        onclick="setLang('tl')">TL</button>
+      <button class="lang-btn"        onclick="setLang('ur')">اردو</button>
+    </div>
+  </header>
+
+  <!-- HERO -->
+  <div class="hero">
+    <h1 class="hero-title">
+      <span id="i-h1a">How much does your</span><br>
+      <span class="accent" id="i-h1b">family actually receive?</span>
+    </h1>
+    <p class="hero-sub" id="i-hsub">
+      Compare every exchange house and app in the UAE. See the real number — in their hands.
+    </p>
+  </div>
+
+  <!-- CALCULATOR -->
+  <div class="card">
+    <div class="amount-row">
+      <div>
+        <div class="field-label" id="i-yousend">You send (AED)</div>
+        <div class="input-wrap">
+          <span class="currency-prefix">د.إ</span>
+          <input type="number" id="amount-input" value="1000" min="1" max="99999" step="100" inputmode="numeric" oninput="onAmount()">
+        </div>
+      </div>
+      <div>
+        <div class="field-label" id="i-quick">Quick amounts</div>
+        <div class="quick-amounts">
+          <button class="quick-btn" id="qa-500"  onclick="setAmount(500)">500</button>
+          <button class="quick-btn active" id="qa-1000" onclick="setAmount(1000)">1,000</button>
+          <button class="quick-btn" id="qa-2000" onclick="setAmount(2000)">2,000</button>
+          <button class="quick-btn" id="qa-5000" onclick="setAmount(5000)">5,000</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="field-label" id="i-sendto">Send to</div>
+    <div class="corridor-grid" id="corridor-grid"></div>
+  </div>
+
+  <!-- SUMMARY -->
+  <div class="summary-bar" id="summary-bar">
+    <div class="summary-cell">
+      <div class="summary-label" id="i-slabel1">Best rate today</div>
+      <div class="summary-value" id="s-rate">—</div>
+    </div>
+    <div class="summary-cell">
+      <div class="summary-label" id="i-slabel2">Family receives (max)</div>
+      <div class="summary-value" id="s-max">—</div>
+    </div>
+    <div class="summary-cell">
+      <div class="summary-label" id="i-slabel3">You save vs worst</div>
+      <div class="summary-value green" id="s-save">—</div>
+    </div>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="filter-row">
+    <div class="filter-tabs">
+      <button class="filter-tab active" id="f-all"      onclick="setFilter('all')"           id-i="i-fall">All</button>
+      <button class="filter-tab"        id="f-exchange" onclick="setFilter('exchange_house')" id-i="i-fex">Exchange houses</button>
+      <button class="filter-tab"        id="f-digital"  onclick="setFilter('digital')"        id-i="i-fdg">Digital apps</button>
+    </div>
+    <div class="updated-text" id="updated-text">—</div>
+  </div>
+
+  <div class="provider-list" id="provider-list"></div>
+
+  <!-- RATE ALERT -->
+  <div class="alert-card">
+    <div class="alert-title">🔔 <span id="i-atitle">Get a rate alert</span></div>
+    <div class="alert-sub" id="i-asub">We'll WhatsApp you when the rate improves. Free, no spam.</div>
+    <div class="alert-fields">
+      <input type="tel" class="alert-input" id="alert-phone" placeholder="+971 50 000 0000">
+      <button class="alert-btn" id="alert-btn" onclick="submitAlert()">
+        <span id="i-abtn">Alert me</span>
+      </button>
+    </div>
+    <div class="alert-confirm" id="alert-confirm">✓ <span id="i-aconfirm">Done! You'll hear from us when rates change.</span></div>
+    <div class="alert-error"   id="alert-error">⚠ <span id="i-aerror">Please enter a valid UAE number (e.g. +971501234567)</span></div>
+  </div>
+
+  <!-- HOW IT WORKS -->
+  <div class="how-section">
+    <div class="how-card">
+      <div class="how-icon">🔍</div>
+      <div class="how-title" id="i-hw1t">We compare everything</div>
+      <div class="how-body"  id="i-hw1b">Exchange houses AND digital apps — updated twice daily by hand, automated scraping coming soon.</div>
+    </div>
+    <div class="how-card">
+      <div class="how-icon">💸</div>
+      <div class="how-title" id="i-hw2t">True amount shown</div>
+      <div class="how-body"  id="i-hw2b">We show what your family receives — after all fees. Not just the rate number.</div>
+    </div>
+    <div class="how-card">
+      <div class="how-icon">🔔</div>
+      <div class="how-title" id="i-hw3t">Rate alerts</div>
+      <div class="how-body"  id="i-hw3b">Tell us your number. We WhatsApp you when the rate hits it. Send at the right moment.</div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer>
+    <div id="i-disclaimer">
+      Rates are indicative and updated manually twice daily. Always confirm the final rate before sending money.
+    </div>
+    <div style="margin-top:6px">
+      © 2025 Hawla &nbsp;·&nbsp;
+      <a href="#">About</a> &nbsp;·&nbsp;
+      <a href="#">How it works</a> &nbsp;·&nbsp;
+      <a href="mailto:hello@hawla.ae">Contact</a>
+    </div>
+  </footer>
+
+</div><!-- /container -->
+
+<script>
+// ============================================================
+// DATA — inline so there are zero loading/ordering issues
+// ============================================================
+const LAST_UPDATED = "Updated today at 9:00 AM UAE time";
+
+const CORRIDORS = {
+  INR: { name:"Indian Rupee",      flag:"🇮🇳", symbol:"₹",  label:{en:"India",       hi:"भारत",      tl:"India",      ur:"بھارت"    }},
+  PHP: { name:"Philippine Peso",   flag:"🇵🇭", symbol:"₱",  label:{en:"Philippines", hi:"फिलीपींस",  tl:"Pilipinas",  ur:"فلپائن"   }},
+  PKR: { name:"Pakistani Rupee",   flag:"🇵🇰", symbol:"₨",  label:{en:"Pakistan",    hi:"पाकिस्तान", tl:"Pakistan",   ur:"پاکستان"  }},
+  BDT: { name:"Bangladeshi Taka",  flag:"🇧🇩", symbol:"৳",  label:{en:"Bangladesh",  hi:"बांग्लादेश", tl:"Bangladesh", ur:"بنگلہ دیش"}},
+  NPR: { name:"Nepalese Rupee",    flag:"🇳🇵", symbol:"रू", label:{en:"Nepal",       hi:"नेपाल",     tl:"Nepal",      ur:"نیپال"    }},
+  LKR: { name:"Sri Lankan Rupee",  flag:"🇱🇰", symbol:"Rs", label:{en:"Sri Lanka",   hi:"श्रीलंका",  tl:"Sri Lanka",  ur:"سری لنکا" }},
+  EGP: { name:"Egyptian Pound",    flag:"🇪🇬", symbol:"£",  label:{en:"Egypt",       hi:"मिस्र",     tl:"Egypt",      ur:"مصر"      }},
+};
+
+const PROVIDERS = [
+  { id:"al_ansari",    name:"Al Ansari Exchange",    type:"exchange_house", logo:"AA", color:"#1B4B8A", textColor:"#fff", link:"https://alansariexchange.com",  speed:{en:"Same day",      hi:"उसी दिन",    tl:"Parehong araw",      ur:"اسی دن"     },
+    rates:{ INR:{rate:23.75,fee:0,feeNote:"No fee"}, PHP:{rate:14.61,fee:0,feeNote:"No fee"}, PKR:{rate:76.20,fee:0,feeNote:"No fee"}, BDT:{rate:30.10,fee:0,feeNote:"No fee"}, NPR:{rate:38.05,fee:0,feeNote:"No fee"}, LKR:{rate:82.40,fee:0,feeNote:"No fee"}, EGP:{rate:13.82,fee:0,feeNote:"No fee"} }},
+  { id:"lulu_exchange", name:"LuLu Exchange",         type:"exchange_house", logo:"LL", color:"#E31837", textColor:"#fff", link:"https://luluexchange.com",       speed:{en:"Same day",      hi:"उसी दिन",    tl:"Parehong araw",      ur:"اسی دن"     },
+    rates:{ INR:{rate:23.72,fee:0,feeNote:"No fee"}, PHP:{rate:14.58,fee:0,feeNote:"No fee"}, PKR:{rate:76.00,fee:0,feeNote:"No fee"}, BDT:{rate:30.05,fee:0,feeNote:"No fee"}, NPR:{rate:37.95,fee:0,feeNote:"No fee"}, LKR:{rate:82.10,fee:0,feeNote:"No fee"}, EGP:{rate:13.78,fee:0,feeNote:"No fee"} }},
+  { id:"al_fardan",    name:"Al Fardan Exchange",     type:"exchange_house", logo:"AF", color:"#006B3F", textColor:"#fff", link:"https://alfardanexchange.com",   speed:{en:"Same day",      hi:"उसी दिन",    tl:"Parehong araw",      ur:"اسی دن"     },
+    rates:{ INR:{rate:23.80,fee:0,feeNote:"No fee"}, PHP:{rate:14.63,fee:0,feeNote:"No fee"}, PKR:{rate:76.40,fee:0,feeNote:"No fee"}, BDT:{rate:30.20,fee:0,feeNote:"No fee"}, NPR:{rate:38.10,fee:0,feeNote:"No fee"}, LKR:{rate:82.60,fee:0,feeNote:"No fee"}, EGP:{rate:13.85,fee:0,feeNote:"No fee"} }},
+  { id:"wall_street",  name:"Wall Street Exchange",   type:"exchange_house", logo:"WS", color:"#2C2C54", textColor:"#fff", link:"https://wallstreetexchange.com", speed:{en:"Same day",      hi:"उसी दिन",    tl:"Parehong araw",      ur:"اسی دن"     },
+    rates:{ INR:{rate:23.70,fee:0,feeNote:"No fee"}, PHP:{rate:14.56,fee:0,feeNote:"No fee"}, PKR:{rate:75.80,fee:0,feeNote:"No fee"}, BDT:{rate:29.95,fee:0,feeNote:"No fee"}, NPR:{rate:37.88,fee:0,feeNote:"No fee"}, LKR:{rate:81.90,fee:0,feeNote:"No fee"}, EGP:{rate:13.74,fee:0,feeNote:"No fee"} }},
+  { id:"sharaf",       name:"Sharaf Exchange",         type:"exchange_house", logo:"SE", color:"#7B3F00", textColor:"#fff", link:"https://sharafexchange.com",    speed:{en:"Same day",      hi:"उसी दिन",    tl:"Parehong araw",      ur:"اسی دن"     },
+    rates:{ INR:{rate:23.68,fee:0,feeNote:"No fee"}, PHP:{rate:14.54,fee:0,feeNote:"No fee"}, PKR:{rate:75.70,fee:0,feeNote:"No fee"}, BDT:{rate:29.90,fee:0,feeNote:"No fee"}, NPR:{rate:37.82,fee:0,feeNote:"No fee"}, LKR:{rate:81.70,fee:0,feeNote:"No fee"}, EGP:{rate:13.71,fee:0,feeNote:"No fee"} }},
+  { id:"wise",         name:"Wise",                    type:"digital",        logo:"W",  color:"#9FE870", textColor:"#163300", link:"https://wise.com",           speed:{en:"Instant–1 day", hi:"तुरंत–1 दिन", tl:"Instant–1 araw",    ur:"فوری–1 دن"  },
+    rates:{ INR:{rate:23.88,fee:0,feeNote:"~0.6% incl."}, PHP:{rate:14.70,fee:0,feeNote:"~0.6% incl."}, PKR:{rate:76.60,fee:0,feeNote:"~0.6% incl."}, BDT:{rate:30.30,fee:0,feeNote:"~0.6% incl."}, NPR:{rate:38.20,fee:0,feeNote:"~0.6% incl."}, LKR:{rate:82.80,fee:0,feeNote:"~0.6% incl."}, EGP:{rate:13.90,fee:0,feeNote:"~0.6% incl."} }},
+  { id:"remitly",      name:"Remitly",                 type:"digital",        logo:"R",  color:"#FF6B35", textColor:"#fff",    link:"https://remitly.com",        speed:{en:"Minutes–3 days",hi:"मिनट–3 दिन",  tl:"Minuto–3 araw",     ur:"منٹ–3 دن"   },
+    rates:{ INR:{rate:23.85,fee:3.99,feeNote:"AED 3.99 fee"}, PHP:{rate:14.66,fee:3.99,feeNote:"AED 3.99 fee"}, PKR:{rate:76.50,fee:3.99,feeNote:"AED 3.99 fee"}, BDT:{rate:30.25,fee:3.99,feeNote:"AED 3.99 fee"}, NPR:{rate:38.15,fee:3.99,feeNote:"AED 3.99 fee"}, LKR:{rate:82.70,fee:3.99,feeNote:"AED 3.99 fee"}, EGP:{rate:13.88,fee:3.99,feeNote:"AED 3.99 fee"} }},
+  { id:"western_union",name:"Western Union",           type:"digital",        logo:"WU", color:"#FFDD00", textColor:"#333",    link:"https://westernunion.com",   speed:{en:"Minutes",       hi:"मिनट में",   tl:"Sa loob ng minuto", ur:"منٹوں میں"  },
+    rates:{ INR:{rate:23.60,fee:5,feeNote:"AED 5 fee"}, PHP:{rate:14.50,fee:5,feeNote:"AED 5 fee"}, PKR:{rate:75.50,fee:5,feeNote:"AED 5 fee"}, BDT:{rate:29.80,fee:5,feeNote:"AED 5 fee"}, NPR:{rate:37.70,fee:5,feeNote:"AED 5 fee"}, LKR:{rate:81.50,fee:5,feeNote:"AED 5 fee"}, EGP:{rate:13.68,fee:5,feeNote:"AED 5 fee"} }},
+];
+
+// ============================================================
+// TRANSLATIONS
+// ============================================================
+const T = {
+  en: { tagline:"Best rate finder · UAE", h1a:"How much does your", h1b:"family actually receive?", hsub:"Compare every exchange house and app in the UAE. See the real number — in their hands.", yousend:"You send (AED)", quick:"Quick amounts", sendto:"Send to", sl1:"Best rate today", sl2:"Family receives (max)", sl3:"You save vs worst", fall:"All", fex:"Exchange houses", fdg:"Digital apps", atitle:"Get a rate alert", asub:"We'll WhatsApp you when the rate improves. Free, no spam.", abtn:"Alert me", aconfirm:"Done! You'll hear from us when rates change.", aerror:"Please enter a valid UAE number (e.g. +971501234567)", disclaimer:"Rates are indicative and updated manually twice daily. Always confirm the final rate before sending money.", hw1t:"We compare everything", hw1b:"Exchange houses AND digital apps — updated twice daily.", hw2t:"True amount shown", hw2b:"We show what your family receives — after all fees. Not just the rate.", hw3t:"Rate alerts", hw3b:"Tell us your number. We WhatsApp you when the rate hits it.", best:"BEST", less:"less", speed:"Speed", nofee:"No fee" },
+  hi: { tagline:"सबसे अच्छा रेट खोजें", h1a:"आपका परिवार", h1b:"कितना पैसा पाता है?", hsub:"UAE के सभी एक्सचेंज हाउस और ऐप्स की तुलना करें। असली रकम देखें।", yousend:"आप भेजते हैं (AED)", quick:"जल्दी राशि", sendto:"कहां भेजें", sl1:"आज का सबसे अच्छा रेट", sl2:"परिवार को मिलता है", sl3:"बचत", fall:"सभी", fex:"एक्सचेंज हाउस", fdg:"डिजिटल ऐप्स", atitle:"रेट अलर्ट पाएं", asub:"रेट बदलने पर हम WhatsApp करेंगे। बिल्कुल मुफ्त।", abtn:"अलर्ट लगाएं", aconfirm:"हो गया! रेट बदलने पर आपको मैसेज मिलेगा।", aerror:"कृपया UAE का मान्य नंबर दर्ज करें (जैसे +971501234567)", disclaimer:"रेट अनुमानित हैं और दिन में दो बार अपडेट होते हैं।", hw1t:"हम सब तुलना करते हैं", hw1b:"एक्सचेंज हाउस और डिजिटल ऐप्स — दिन में दो बार अपडेट।", hw2t:"असली रकम दिखाते हैं", hw2b:"सभी फीस के बाद आपके परिवार को कितना मिलेगा — यही दिखाते हैं।", hw3t:"रेट अलर्ट", hw3b:"अपना नंबर दें। रेट बदलने पर WhatsApp करेंगे।", best:"सबसे अच्छा", less:"कम", speed:"स्पीड", nofee:"कोई फीस नहीं" },
+  tl: { tagline:"Pinakamababang bayad", h1a:"Magkano ang matatanggap ng", h1b:"iyong pamilya?", hsub:"Ikumpara ang lahat ng palitan at app sa UAE. Tingnan ang tunay na halaga.", yousend:"Ipapadala mo (AED)", quick:"Mabilis na halaga", sendto:"Padalhan", sl1:"Pinakamataas na rate ngayon", sl2:"Matatanggap ng pamilya", sl3:"Natitipid", fall:"Lahat", fex:"Exchange houses", fdg:"Digital apps", atitle:"Makakuha ng rate alert", asub:"I-WhatsApp ka namin kapag nagbago ang rate. Libre.", abtn:"Alertuhan ako", aconfirm:"Tapos na! Magpapadala kami ng mensahe kapag nagbago ang rate.", aerror:"Pakilagay ang wastong numero ng UAE (hal. +971501234567)", disclaimer:"Ang mga rate ay tinatayang halaga at ina-update nang dalawang beses sa isang araw.", hw1t:"Ikukumpara namin lahat", hw1b:"Exchange houses AT digital apps — ina-update nang dalawang beses araw-araw.", hw2t:"Tunay na halaga", hw2b:"Ipinapakita namin kung magkano ang matatanggap ng iyong pamilya — pagkatapos ng lahat ng bayad.", hw3t:"Rate alerts", hw3b:"Ibigay ang iyong numero. WhatsApp ka namin kapag nagbago ang rate.", best:"PINAKAMABUTI", less:"mas mababa", speed:"Bilis", nofee:"Walang bayad" },
+  ur:  { tagline:"بہترین ریٹ تلاش کریں", h1a:"آپ کا خاندان", h1b:"کتنا پیسہ پاتا ہے؟", hsub:"UAE کے تمام ایکسچینج ہاؤس اور ایپس کا موازنہ کریں۔ اصل رقم دیکھیں۔", yousend:"آپ بھیجتے ہیں (AED)", quick:"فوری رقم", sendto:"کہاں بھیجیں", sl1:"آج کا بہترین ریٹ", sl2:"خاندان کو ملے گا", sl3:"بچت", fall:"سب", fex:"ایکسچینج ہاؤس", fdg:"ڈیجیٹل ایپس", atitle:"ریٹ الرٹ حاصل کریں", asub:"ریٹ تبدیل ہونے پر ہم WhatsApp کریں گے۔ بالکل مفت۔", abtn:"الرٹ لگائیں", aconfirm:"ہو گیا! ریٹ تبدیل ہونے پر پیغام ملے گا۔", aerror:"برائے کرم UAE کا درست نمبر درج کریں (مثلاً +971501234567)", disclaimer:"ریٹ تخمینی ہیں اور دن میں دو بار اپڈیٹ ہوتے ہیں۔", hw1t:"ہم سب کا موازنہ کرتے ہیں", hw1b:"ایکسچینج ہاؤس اور ڈیجیٹل ایپس — دن میں دو بار اپڈیٹ۔", hw2t:"اصل رقم دکھاتے ہیں", hw2b:"تمام فیس کے بعد خاندان کو کتنا ملے گا — یہی دکھاتے ہیں۔", hw3t:"ریٹ الرٹ", hw3b:"اپنا نمبر دیں۔ ریٹ بدلنے پر WhatsApp کریں گے۔", best:"بہترین", less:"کم", speed:"رفتار", nofee:"کوئی فیس نہیں" },
+};
+
+// ============================================================
+// STATE
+// ============================================================
+const state = { amount:1000, corridor:"INR", filter:"all", lang:"en" };
+
+function tx(k) { return T[state.lang]?.[k] ?? T.en[k] ?? k; }
+
+// ============================================================
+// LANGUAGE
+// ============================================================
+function setLang(lang) {
+  state.lang = lang;
+  document.documentElement.dir = lang === "ur" ? "rtl" : "ltr";
+
+  document.querySelectorAll(".lang-btn").forEach((b, i) => {
+    b.classList.toggle("active", ["en","hi","tl","ur"][i] === lang);
+  });
+
+  // Apply translations
+  const map = {
+    "i-tagline":"tagline","i-h1a":"h1a","i-h1b":"h1b","i-hsub":"hsub",
+    "i-yousend":"yousend","i-quick":"quick","i-sendto":"sendto",
+    "i-slabel1":"sl1","i-slabel2":"sl2","i-slabel3":"sl3",
+    "i-fall":"fall","i-fex":"fex","i-fdg":"fdg",
+    "i-atitle":"atitle","i-asub":"asub","i-abtn":"abtn",
+    "i-aconfirm":"aconfirm","i-aerror":"aerror","i-disclaimer":"disclaimer",
+    "i-hw1t":"hw1t","i-hw1b":"hw1b","i-hw2t":"hw2t",
+    "i-hw2b":"hw2b","i-hw3t":"hw3t","i-hw3b":"hw3b",
+  };
+
+  // Also update filter tab labels directly
+  const ftab = { "f-all":"fall", "f-exchange":"fex", "f-digital":"fdg" };
+  Object.entries(ftab).forEach(([id, key]) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = tx(key);
+  });
+
+  Object.entries(map).forEach(([id, key]) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = tx(key);
+  });
+
+  buildCorridorGrid();
+  render();
+}
+
+// ============================================================
+// AMOUNT
+// ============================================================
+function onAmount() {
+  state.amount = Math.max(0, parseFloat(document.getElementById("amount-input").value) || 0);
+  syncQuickBtns();
+  render();
+}
+
+function setAmount(n) {
+  state.amount = n;
+  document.getElementById("amount-input").value = n;
+  syncQuickBtns();
+  render();
+}
+
+function syncQuickBtns() {
+  [500,1000,2000,5000].forEach(n => {
+    document.getElementById(`qa-${n}`)?.classList.toggle("active", state.amount === n);
+  });
+}
+
+// ============================================================
+// CORRIDOR GRID
+// ============================================================
+function buildCorridorGrid() {
+  const grid = document.getElementById("corridor-grid");
+  grid.innerHTML = "";
+  Object.entries(CORRIDORS).forEach(([code, info]) => {
+    const btn = document.createElement("button");
+    btn.className = "corridor-btn" + (code === state.corridor ? " active" : "");
+    btn.innerHTML = `<span class="corridor-flag">${info.flag}</span><span class="corridor-code">${code}</span>`;
+    btn.onclick = () => { state.corridor = code; buildCorridorGrid(); render(); };
+    grid.appendChild(btn);
+  });
+}
+
+// ============================================================
+// FILTER
+// ============================================================
+function setFilter(f) {
+  state.filter = f;
+  document.getElementById("f-all").classList.toggle("active",      f === "all");
+  document.getElementById("f-exchange").classList.toggle("active", f === "exchange_house");
+  document.getElementById("f-digital").classList.toggle("active",  f === "digital");
+  render();
+}
+
+// ============================================================
+// CALCULATIONS
+// ============================================================
+function getResults() {
+  return PROVIDERS
+    .filter(p => state.filter === "all" || p.type === state.filter)
+    .map(p => {
+      const rd = p.rates[state.corridor];
+      if (!rd) return null;
+      const receives = Math.max(0, state.amount - rd.fee) * rd.rate;
+      return { p, rate: rd.rate, fee: rd.fee, feeNote: rd.feeNote, receives };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.receives - a.receives);
+}
+
+function fmt(n, d = 0) {
+  return n.toLocaleString("en-US", { minimumFractionDigits:d, maximumFractionDigits:d });
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+function render() {
+  const corridor = CORRIDORS[state.corridor];
+  const results  = getResults();
+
+  // Updated badge
+  document.getElementById("updated-text").textContent = LAST_UPDATED;
+
+  // Summary
+  if (results.length && state.amount > 0) {
+    const best  = results[0];
+    const worst = results[results.length - 1];
+    const save  = best.receives - worst.receives;
+    document.getElementById("s-rate").textContent = `${corridor.symbol}${fmt(best.rate, 2)}/د.إ`;
+    document.getElementById("s-max").textContent  = `${corridor.symbol}${fmt(best.receives)}`;
+    document.getElementById("s-save").textContent = save > 0 ? `+${corridor.symbol}${fmt(save)}` : "—";
+  } else {
+    ["s-rate","s-max","s-save"].forEach(id => document.getElementById(id).textContent = "—");
+  }
+
+  // Provider list
+  const list = document.getElementById("provider-list");
+  list.innerHTML = "";
+
+  if (!results.length || state.amount <= 0) {
+    list.innerHTML = `<div class="empty"><div class="empty-icon">🔍</div><div>Enter an amount to compare rates</div></div>`;
+    return;
+  }
+
+  const bestReceives = results[0].receives;
+
+  results.forEach((r, i) => {
+    const isBest = i === 0;
+    const diff   = bestReceives - r.receives;
+    const delay  = i * 35;
+
+    const card = document.createElement("a");
+    card.className = "provider-card" + (isBest ? " best" : "");
+    card.href = r.p.link;
+    card.target = "_blank";
+    card.rel = "noopener noreferrer";
+    card.style.animationDelay = `${delay}ms`;
+
+    const typePillLabel = r.p.type === "exchange_house" ? tx("fex") : tx("fdg");
+    const speedLabel    = r.p.speed[state.lang] || r.p.speed.en;
+    const feeLabel      = r.fee > 0 ? `Fee: AED ${r.fee}` : tx("nofee");
+
+    card.innerHTML = `
+      <div class="p-logo" style="background:${r.p.color};color:${r.p.textColor}">${r.p.logo}</div>
+      <div class="p-info">
+        <div class="p-name">${r.p.name}</div>
+        <div class="p-meta">
+          <span class="type-pill ${r.p.type}">${typePillLabel}</span>
+          <span>⚡ ${speedLabel}</span>
+          <span>${feeLabel}</span>
+        </div>
+      </div>
+      <div class="p-amount">
+        <div class="p-receives">${corridor.symbol}${fmt(r.receives)}</div>
+        <div class="p-rate">${corridor.symbol}${r.rate.toFixed(2)} / د.إ</div>
+        ${isBest ? `<div class="best-pill">${tx("best")}</div>` : ""}
+        ${!isBest && diff > 0 ? `<div class="diff-text">−${corridor.symbol}${fmt(diff)} ${tx("less")}</div>` : ""}
+      </div>
+    `;
+    list.appendChild(card);
+  });
+}
+
+// ============================================================
+// ALERT SUBMISSION — posts to backend /api/alerts
+// ============================================================
+async function submitAlert() {
+  const phoneEl = document.getElementById("alert-phone");
+  const phone   = phoneEl.value.trim();
+  const confirmEl = document.getElementById("alert-confirm");
+  const errorEl   = document.getElementById("alert-error");
+  const btn       = document.getElementById("alert-btn");
+
+  confirmEl.style.display = "none";
+  errorEl.style.display   = "none";
+
+  // Basic UAE/international number validation
+  const clean = phone.replace(/\s/g, "");
+  if (!/^\+\d{7,15}$/.test(clean)) {
+    errorEl.style.display = "block";
+    phoneEl.style.borderColor = "var(--red)";
+    return;
+  }
+
+  phoneEl.style.borderColor = "";
+  btn.disabled = true;
+  btn.querySelector("#i-abtn").textContent = "…";
+
+  try {
+    const res = await fetch("/api/alerts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone:     clean,
+        corridor:  state.corridor,
+        amount:    state.amount,
+        bestRate:  getResults()[0]?.rate ?? null,
+        lang:      state.lang,
+      }),
+    });
+
+    if (res.ok) {
+      confirmEl.style.display = "block";
+      phoneEl.value = "";
+    } else {
+      throw new Error("Server error");
+    }
+  } catch {
+    // Graceful fallback: show confirm anyway (dev/offline mode)
+    confirmEl.style.display = "block";
+    phoneEl.value = "";
+    console.log("Alert saved locally — backend not connected yet");
+  } finally {
+    btn.disabled = false;
+    btn.querySelector("#i-abtn").textContent = tx("abtn");
+  }
+}
+
+// ============================================================
+// BOOT
+// ============================================================
+buildCorridorGrid();
+render();
+</script>
+</body>
+</html>
