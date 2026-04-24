@@ -161,13 +161,33 @@ function maskPhone(p) { return p.slice(0,4)+"****"+p.slice(-3); }
 // ============================================================
 // ALERT CHECKER
 // ============================================================
+// Track whether this is the very first scrape run
+// so we never alert on startup jumps from fallback → live rates
+let isFirstRun = true;
+
 async function checkAndAlert() {
   const bestRates = db.getBestRatePerCorridor();
+
+  if (isFirstRun) {
+    // On first run: just save snapshots, never send alerts
+    // This prevents false alerts when live rates replace fallback rates on startup
+    for (const { corridor, effective_rate } of bestRates) {
+      db.saveSnapshot(corridor, effective_rate);
+    }
+    isFirstRun = false;
+    console.log("ℹ  First run snapshots saved — alerts active from next scrape.");
+    return;
+  }
+
   for (const { corridor, effective_rate } of bestRates) {
     const snapshot = db.getSnapshot(corridor);
     if (!snapshot) { db.saveSnapshot(corridor, effective_rate); continue; }
+
     const improvement = (effective_rate - snapshot.best_rate) / snapshot.best_rate;
-    if (improvement >= 0.0005) {
+
+    // Only alert on genuine improvements of 0.05% or more
+    // AND only if the change is less than 5% (filters out data errors)
+    if (improvement >= 0.0005 && improvement < 0.05) {
       console.log(`📈 ${corridor}: ${snapshot.best_rate.toFixed(4)} → ${effective_rate.toFixed(4)}`);
       const subs = db.getSubscribersByCorridors([corridor]);
       for (const sub of subs) {
@@ -175,6 +195,7 @@ async function checkAndAlert() {
         db.updateSubscriberRate(sub.phone, corridor, effective_rate);
       }
     }
+
     db.saveSnapshot(corridor, effective_rate);
   }
 }

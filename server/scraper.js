@@ -1,13 +1,21 @@
 // ============================================================
 // HAWLA — server/scraper.js
 // ============================================================
-const { chromium } = require("playwright");
-const db           = require("./db");
+// Strategy per provider:
+//   Wise        → Public JSON API (reliable, always works)
+//   Exchange houses → Try JSON API first, fall back to axios
+//                     HTML fetch, then fallback rates
+//   Remitly/WU  → Public rate pages via axios (no browser needed)
+//
+// We use axios for simple HTTP requests (faster, no bot detection)
+// and only use Playwright as last resort.
+// ============================================================
+
+const axios  = require("axios");
+const db     = require("./db");
 
 const CORRIDORS = ["INR","PHP","PKR","BDT","NPR","LKR","EGP"];
 
-// Fallback rates — used when scraper fails
-// Update these manually once a week as a safety net
 const FALLBACK_RATES = {
   al_ansari:     { INR:23.75, PHP:14.61, PKR:76.20, BDT:30.10, NPR:38.05, LKR:82.40, EGP:13.82 },
   lulu_exchange: { INR:23.72, PHP:14.58, PKR:76.00, BDT:30.05, NPR:37.95, LKR:82.10, EGP:13.78 },
@@ -19,276 +27,343 @@ const FALLBACK_RATES = {
   western_union: { INR:23.60, PHP:14.50, PKR:75.50, BDT:29.80, NPR:37.70, LKR:81.50, EGP:13.68 },
 };
 
-// Currency keyword map — used by all table scrapers
 const CURRENCY_MAP = {
   INR: ["INR","INDIAN","INDIA"],
-  PHP: ["PHP","PHILIPPINE","PESO","FILIPINO"],
-  PKR: ["PKR","PAKISTAN","PAKISTANI"],
-  BDT: ["BDT","BANGLADESH","BANGLADESHI","TAKA"],
-  NPR: ["NPR","NEPAL","NEPALESE"],
-  LKR: ["LKR","SRI LANKA","SRI LANKAN"],
-  EGP: ["EGP","EGYPT","EGYPTIAN"],
+  PHP: ["PHP","PHILIPPINE","PESO"],
+  PKR: ["PKR","PAKISTAN"],
+  BDT: ["BDT","BANGLADESH","TAKA"],
+  NPR: ["NPR","NEPAL"],
+  LKR: ["LKR","SRI LANKA","SRI_LANKA"],
+  EGP: ["EGP","EGYPT"],
 };
 
-// ── HELPERS ────────────────────────────────────────────────
+// Standard browser-like headers for axios requests
+const HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-AE,en;q=0.9",
+  "Cache-Control": "no-cache",
+};
 
-async function newPage(browser) {
-  const page = await browser.newPage();
-  await page.setExtraHTTPHeaders({
-    "Accept-Language": "en-AE,en;q=0.9,ar;q=0.8",
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-  });
-  // Block images/fonts/css to speed up scraping
-  await page.route("**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,css}", r => r.abort());
-  return page;
+function parseRate(val) {
+  if (val === null || val === undefined) return null;
+  const n = parseFloat(String(val).replace(/[^\d.]/g, ""));
+  return (!isNaN(n) && n >= 1 && n <= 500) ? n : null;
 }
 
-function parseRate(str) {
-  if (!str) return null;
-  const cleaned = String(str).replace(/[^\d.]/g, "");
-  const val = parseFloat(cleaned);
-  // Rates should be between 1 and 500 to be valid
-  return (!isNaN(val) && val >= 1 && val <= 500) ? val : null;
-}
-
-// Generic table scraper — works for most exchange house sites
-async function scrapeTable(page, url) {
+// Try to extract rates from plain HTML text
+function extractFromText(text) {
   const results = {};
-  try {
-    await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
-    // Wait a bit for JS-rendered content
-    await page.waitForTimeout(3000);
-
-    // Try to get all text content and find rates near currency names
-    const bodyText = await page.evaluate(() => document.body.innerText);
-    const lines = bodyText.split("\n").map(l => l.trim()).filter(Boolean);
-
-    lines.forEach((line, i) => {
-      const upper = line.toUpperCase();
-      Object.entries(CURRENCY_MAP).forEach(([corridor, keywords]) => {
-        if (results[corridor]) return; // already found
-        if (keywords.some(k => upper.includes(k))) {
-          // Look at this line and next 3 lines for a valid rate
-          for (let j = i; j < Math.min(i + 4, lines.length); j++) {
-            const rate = parseRate(lines[j]);
-            if (rate && rate > 5) { // Rates should be > 5
-              results[corridor] = rate;
-              break;
-            }
+  const lines = text.split(/[\n\r]+/).map(l => l.trim()).filter(Boolean);
+  lines.forEach((line, i) => {
+    const upper = line.toUpperCase();
+    Object.entries(CURRENCY_MAP).forEach(([corridor, keywords]) => {
+      if (results[corridor]) return;
+      if (keywords.some(k => upper.includes(k))) {
+        for (let j = i; j < Math.min(i + 5, lines.length); j++) {
+          const nums = lines[j].match(/\d{2,3}\.\d{2,6}/g);
+          if (nums) {
+            const rate = parseRate(nums[0]);
+            if (rate && rate > 5) { results[corridor] = rate; break; }
           }
         }
-      });
+      }
     });
+  });
+  return results;
+}
 
-    // Also try table cells directly
-    if (Object.keys(results).length < 3) {
-      const tableData = await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll("tr"));
-        return rows.map(row => ({
-          cells: Array.from(row.querySelectorAll("td,th")).map(c => c.innerText.trim())
-        }));
-      });
+// ── WISE — public JSON API ──────────────────────────────────
+// Most reliable — Wise publishes live mid-market rates via API
+async function scrapeWise() {
+  const results = {};
+  const targets = ["INR","PHP","PKR","BDT","NPR","LKR","EGP"];
 
-      tableData.forEach(({ cells }) => {
-        if (cells.length < 2) return;
-        const label = cells[0].toUpperCase();
-        Object.entries(CURRENCY_MAP).forEach(([corridor, keywords]) => {
-          if (results[corridor]) return;
-          if (keywords.some(k => label.includes(k))) {
-            for (let i = 1; i < cells.length; i++) {
-              const rate = parseRate(cells[i]);
-              if (rate && rate > 5) { results[corridor] = rate; break; }
+  for (const currency of targets) {
+    try {
+      // Wise public rates API
+      const res = await axios.get(
+        `https://wise.com/rates/live?source=AED&target=${currency}`,
+        { headers: HEADERS, timeout: 10000 }
+      );
+      const rate = res.data?.value || res.data?.rate;
+      if (rate) {
+        // Apply ~0.6% Wise fee to get effective rate
+        results[currency] = parseFloat((rate * 0.994).toFixed(4));
+      }
+    } catch {
+      // Try alternate endpoint
+      try {
+        const res2 = await axios.get(
+          `https://api.wise.com/v1/rates?source=AED&target=${currency}`,
+          { headers: HEADERS, timeout: 10000 }
+        );
+        const data = Array.isArray(res2.data) ? res2.data[0] : res2.data;
+        const rate = data?.rate;
+        if (rate) results[currency] = parseFloat((rate * 0.994).toFixed(4));
+      } catch {}
+    }
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  console.log(`  Wise: ${Object.keys(results).join(", ") || "none"}`);
+  return results;
+}
+
+// ── AL ANSARI — axios HTML fetch ────────────────────────────
+async function scrapeAlAnsari() {
+  const results = {};
+  const urls = [
+    "https://alansariexchange.com/service/foreign-exchange/",
+    "https://alansariexchange.com/exchange-rates/",
+    "https://alansariexchange.com/wp-json/rates/v1/all", // common WP REST endpoint
+  ];
+
+  for (const url of urls) {
+    try {
+      const res = await axios.get(url, { headers: HEADERS, timeout: 15000 });
+      const data = res.data;
+
+      // If JSON response
+      if (typeof data === "object") {
+        const rates = data?.rates || data?.data || data;
+        if (Array.isArray(rates)) {
+          rates.forEach(item => {
+            const code = (item?.currency_code || item?.code || item?.currency || "").toUpperCase();
+            if (CORRIDORS.includes(code)) {
+              const rate = parseRate(item?.rate || item?.sell_rate || item?.buy_rate);
+              if (rate) results[code] = rate;
             }
+          });
+        }
+      }
+
+      // If HTML response
+      if (typeof data === "string") {
+        const extracted = extractFromText(data);
+        Object.assign(results, extracted);
+      }
+
+      if (Object.keys(results).length >= 3) break;
+    } catch {}
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  console.log(`  Al Ansari: ${Object.keys(results).join(", ") || "none"}`);
+  return results;
+}
+
+// ── LULU EXCHANGE ───────────────────────────────────────────
+async function scrapeLuLu() {
+  const results = {};
+  const urls = [
+    "https://luluexchange.com/en/currency-exchange",
+    "https://luluexchange.com/api/rates",
+    "https://luluexchange.com/currency-rates",
+  ];
+
+  for (const url of urls) {
+    try {
+      const res = await axios.get(url, { headers: HEADERS, timeout: 15000 });
+      const data = res.data;
+
+      if (typeof data === "object") {
+        const rates = data?.rates || data?.data || (Array.isArray(data) ? data : null);
+        if (rates) {
+          (Array.isArray(rates) ? rates : Object.entries(rates)).forEach(item => {
+            const entry = Array.isArray(item) ? { code: item[0], rate: item[1] } : item;
+            const code = (entry?.code || entry?.currency || entry?.currency_code || "").toUpperCase();
+            if (CORRIDORS.includes(code)) {
+              const rate = parseRate(entry?.rate || entry?.value);
+              if (rate) results[code] = rate;
+            }
+          });
+        }
+      }
+
+      if (typeof data === "string") {
+        const extracted = extractFromText(data);
+        Object.assign(results, extracted);
+      }
+
+      if (Object.keys(results).length >= 3) break;
+    } catch {}
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  console.log(`  LuLu: ${Object.keys(results).join(", ") || "none"}`);
+  return results;
+}
+
+// ── AL FARDAN ───────────────────────────────────────────────
+async function scrapeAlFardan() {
+  const results = {};
+  const urls = [
+    "https://alfardanexchange.com",
+    "https://alfardanexchange.com/rates",
+    "https://alfardanexchange.com/api/rates",
+  ];
+
+  for (const url of urls) {
+    try {
+      const res = await axios.get(url, { headers: HEADERS, timeout: 15000 });
+      const data = res.data;
+      if (typeof data === "string") {
+        // Look for JSON embedded in HTML
+        const jsonMatch = data.match(/rates\s*[:=]\s*(\[[\s\S]{20,500}?\])/);
+        if (jsonMatch) {
+          try {
+            const rates = JSON.parse(jsonMatch[1]);
+            rates.forEach(item => {
+              const code = (item?.code || item?.currency || "").toUpperCase();
+              if (CORRIDORS.includes(code)) {
+                const rate = parseRate(item?.rate || item?.sell);
+                if (rate) results[code] = rate;
+              }
+            });
+          } catch {}
+        }
+        if (Object.keys(results).length < 3) {
+          const extracted = extractFromText(data);
+          Object.assign(results, extracted);
+        }
+      }
+      if (Object.keys(results).length >= 3) break;
+    } catch {}
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  console.log(`  Al Fardan: ${Object.keys(results).join(", ") || "none"}`);
+  return results;
+}
+
+// ── WALL STREET EXCHANGE ────────────────────────────────────
+async function scrapeWallStreet() {
+  const results = {};
+  const urls = [
+    "https://wallstreetexchange.com",
+    "https://wallstreetexchange.com/exchange-rates",
+    "https://wallstreetexchange.com/api/rates",
+  ];
+
+  for (const url of urls) {
+    try {
+      const res = await axios.get(url, { headers: HEADERS, timeout: 15000 });
+      const data = res.data;
+      if (typeof data === "string") {
+        const extracted = extractFromText(data);
+        Object.assign(results, extracted);
+      } else if (typeof data === "object") {
+        const rates = data?.rates || data?.data || [];
+        rates.forEach && rates.forEach(item => {
+          const code = (item?.code || item?.currency || "").toUpperCase();
+          if (CORRIDORS.includes(code)) {
+            const rate = parseRate(item?.rate || item?.sell);
+            if (rate) results[code] = rate;
           }
         });
-      });
-    }
-  } catch (err) {
-    console.log(`    Table scrape error: ${err.message.slice(0, 80)}`);
-  }
-  return results;
-}
-
-// ── SCRAPERS ───────────────────────────────────────────────
-
-async function scrapeAlAnsari(browser) {
-  const page = await newPage(browser);
-  let results = {};
-  try {
-    results = await scrapeTable(page, "https://alansariexchange.com/service/foreign-exchange/");
-    // Try alternate URL if main fails
-    if (Object.keys(results).length < 3) {
-      results = await scrapeTable(page, "https://alansariexchange.com/exchange-rates/");
-    }
-    console.log(`  Al Ansari: ${Object.keys(results).join(", ") || "none"}`);
-  } catch (e) { console.log(`  Al Ansari error: ${e.message.slice(0,60)}`); }
-  finally { await page.close(); }
-  return results;
-}
-
-async function scrapeLuLu(browser) {
-  const page = await newPage(browser);
-  let results = {};
-  try {
-    results = await scrapeTable(page, "https://luluexchange.com/en/currency-exchange");
-    if (Object.keys(results).length < 3) {
-      results = await scrapeTable(page, "https://luluexchange.com/currency-rates");
-    }
-    console.log(`  LuLu: ${Object.keys(results).join(", ") || "none"}`);
-  } catch (e) { console.log(`  LuLu error: ${e.message.slice(0,60)}`); }
-  finally { await page.close(); }
-  return results;
-}
-
-async function scrapeAlFardan(browser) {
-  const page = await newPage(browser);
-  let results = {};
-  try {
-    results = await scrapeTable(page, "https://alfardanexchange.com");
-    console.log(`  Al Fardan: ${Object.keys(results).join(", ") || "none"}`);
-  } catch (e) { console.log(`  Al Fardan error: ${e.message.slice(0,60)}`); }
-  finally { await page.close(); }
-  return results;
-}
-
-async function scrapeWallStreet(browser) {
-  const page = await newPage(browser);
-  let results = {};
-  try {
-    results = await scrapeTable(page, "https://wallstreetexchange.com");
-    console.log(`  Wall Street: ${Object.keys(results).join(", ") || "none"}`);
-  } catch (e) { console.log(`  Wall Street error: ${e.message.slice(0,60)}`); }
-  finally { await page.close(); }
-  return results;
-}
-
-async function scrapeSharaf(browser) {
-  const page = await newPage(browser);
-  let results = {};
-  try {
-    results = await scrapeTable(page, "https://sharafexchange.com/exchange-rates");
-    if (Object.keys(results).length < 3) {
-      results = await scrapeTable(page, "https://sharafexchange.com");
-    }
-    console.log(`  Sharaf: ${Object.keys(results).join(", ") || "none"}`);
-  } catch (e) { console.log(`  Sharaf error: ${e.message.slice(0,60)}`); }
-  finally { await page.close(); }
-  return results;
-}
-
-// ── WISE — uses public API endpoint (most reliable) ────────
-async function scrapeWise(browser) {
-  const page = await newPage(browser);
-  const results = {};
-  const pairs = [
-    { corridor:"INR", to:"INR" }, { corridor:"PHP", to:"PHP" },
-    { corridor:"PKR", to:"PKR" }, { corridor:"BDT", to:"BDT" },
-    { corridor:"NPR", to:"NPR" }, { corridor:"LKR", to:"LKR" },
-    { corridor:"EGP", to:"EGP" },
-  ];
-  try {
-    for (const pair of pairs) {
-      try {
-        // Wise public comparison API — returns JSON
-        const url = `https://wise.com/rates/live?source=AED&target=${pair.to}`;
-        const response = await page.goto(url, { waitUntil:"domcontentloaded", timeout:15000 });
-        const text = await page.evaluate(() => document.body.innerText);
-        const data = JSON.parse(text);
-        // Apply ~0.6% fee to get effective rate
-        const rate = data?.value || data?.rate || data?.mid;
-        if (rate) results[pair.corridor] = parseFloat((rate * 0.994).toFixed(4));
-      } catch {
-        // Try alternate URL
-        try {
-          const url2 = `https://wise.com/gb/currency-converter/aed-to-${pair.to.toLowerCase()}-rate?amount=1`;
-          await page.goto(url2, { waitUntil:"domcontentloaded", timeout:15000 });
-          const content = await page.content();
-          const match = content.match(/"rate"\s*:\s*([\d.]+)/) ||
-                        content.match(/([\d]{2,3}\.[\d]{2,6})/);
-          if (match) {
-            const rate = parseRate(match[1]);
-            if (rate) results[pair.corridor] = parseFloat((rate * 0.994).toFixed(4));
-          }
-        } catch {}
       }
-      await page.waitForTimeout(800);
-    }
-    console.log(`  Wise: ${Object.keys(results).join(", ") || "none"}`);
-  } catch (e) { console.log(`  Wise error: ${e.message.slice(0,60)}`); }
-  finally { await page.close(); }
+      if (Object.keys(results).length >= 3) break;
+    } catch {}
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  console.log(`  Wall Street: ${Object.keys(results).join(", ") || "none"}`);
   return results;
 }
 
-// ── REMITLY ────────────────────────────────────────────────
-async function scrapeRemitly(browser) {
-  const page = await newPage(browser);
+// ── SHARAF EXCHANGE ─────────────────────────────────────────
+async function scrapeSharaf() {
+  const results = {};
+  const urls = [
+    "https://sharafexchange.com/exchange-rates",
+    "https://sharafexchange.com",
+    "https://sharafexchange.com/api/rates",
+  ];
+
+  for (const url of urls) {
+    try {
+      const res = await axios.get(url, { headers: HEADERS, timeout: 15000 });
+      const data = res.data;
+      if (typeof data === "string") {
+        const extracted = extractFromText(data);
+        Object.assign(results, extracted);
+      }
+      if (Object.keys(results).length >= 3) break;
+    } catch {}
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  console.log(`  Sharaf: ${Object.keys(results).join(", ") || "none"}`);
+  return results;
+}
+
+// ── REMITLY — public rate pages ─────────────────────────────
+async function scrapeRemitly() {
   const results = {};
   const targets = [
-    { corridor:"INR", country:"india",       currency:"INR" },
-    { corridor:"PHP", country:"philippines", currency:"PHP" },
-    { corridor:"PKR", country:"pakistan",    currency:"PKR" },
-    { corridor:"BDT", country:"bangladesh",  currency:"BDT" },
-    { corridor:"NPR", country:"nepal",       currency:"NPR" },
-    { corridor:"LKR", country:"sri-lanka",   currency:"LKR" },
-    { corridor:"EGP", country:"egypt",       currency:"EGP" },
+    { corridor:"INR", url:"https://www.remitly.com/ae/en/india?sourceAmount=1000&sourceCurrency=AED&targetCurrency=INR" },
+    { corridor:"PHP", url:"https://www.remitly.com/ae/en/philippines?sourceAmount=1000&sourceCurrency=AED&targetCurrency=PHP" },
+    { corridor:"PKR", url:"https://www.remitly.com/ae/en/pakistan?sourceAmount=1000&sourceCurrency=AED&targetCurrency=PKR" },
+    { corridor:"BDT", url:"https://www.remitly.com/ae/en/bangladesh?sourceAmount=1000&sourceCurrency=AED&targetCurrency=BDT" },
+    { corridor:"NPR", url:"https://www.remitly.com/ae/en/nepal?sourceAmount=1000&sourceCurrency=AED&targetCurrency=NPR" },
+    { corridor:"LKR", url:"https://www.remitly.com/ae/en/sri-lanka?sourceAmount=1000&sourceCurrency=AED&targetCurrency=LKR" },
+    { corridor:"EGP", url:"https://www.remitly.com/ae/en/egypt?sourceAmount=1000&sourceCurrency=AED&targetCurrency=EGP" },
   ];
-  try {
-    for (const t of targets) {
-      try {
-        const url = `https://www.remitly.com/ae/en/${t.country}?sourceAmount=1000&sourceCurrency=AED&targetCurrency=${t.currency}`;
-        await page.goto(url, { waitUntil:"domcontentloaded", timeout:20000 });
-        await page.waitForTimeout(2500);
-        const content = await page.content();
-        const match = content.match(/"exchangeRate"\s*[":]+\s*"?([\d.]+)"?/) ||
-                      content.match(/exchange.rate[^"]*"([\d.]+)"/i) ||
-                      content.match(/data-rate="([\d.]+)"/);
+
+  for (const t of targets) {
+    try {
+      const res = await axios.get(t.url, { headers: HEADERS, timeout: 15000 });
+      const html = res.data;
+      // Look for exchange rate in page source
+      const match = html.match(/"exchangeRate"\s*[":]+\s*"?([\d.]+)"?/) ||
+                    html.match(/data-exchange-rate="([\d.]+)"/) ||
+                    html.match(/exchange_rate['":\s]+([\d.]+)/i);
+      if (match) {
+        const rate = parseRate(match[1]);
+        if (rate) results[t.corridor] = rate;
+      }
+    } catch {}
+    await new Promise(r => setTimeout(r, 400));
+  }
+
+  console.log(`  Remitly: ${Object.keys(results).join(", ") || "none"}`);
+  return results;
+}
+
+// ── WESTERN UNION ───────────────────────────────────────────
+async function scrapeWesternUnion() {
+  const results = {};
+  const targets = [
+    { corridor:"INR", to:"IN", currency:"INR" },
+    { corridor:"PHP", to:"PH", currency:"PHP" },
+    { corridor:"PKR", to:"PK", currency:"PKR" },
+    { corridor:"BDT", to:"BD", currency:"BDT" },
+    { corridor:"NPR", to:"NP", currency:"NPR" },
+    { corridor:"LKR", to:"LK", currency:"LKR" },
+    { corridor:"EGP", to:"EG", currency:"EGP" },
+  ];
+
+  for (const t of targets) {
+    try {
+      const url = `https://www.westernunion.com/us/en/send-money/app/price-estimation?fromCountry=AE&toCountry=${t.to}&amount=1000&amountCurrencyCountry=AE&toCurrency=${t.currency}`;
+      const res = await axios.get(url, { headers: HEADERS, timeout: 15000 });
+      const data = res.data;
+      if (typeof data === "object") {
+        const rate = parseRate(data?.exchangeRate || data?.exchange_rate || data?.rate);
+        if (rate) results[t.corridor] = rate;
+      } else if (typeof data === "string") {
+        const match = data.match(/"exchangeRate"\s*:\s*([\d.]+)/);
         if (match) {
           const rate = parseRate(match[1]);
           if (rate) results[t.corridor] = rate;
         }
-      } catch {}
-      await page.waitForTimeout(1000);
-    }
-    console.log(`  Remitly: ${Object.keys(results).join(", ") || "none"}`);
-  } catch (e) { console.log(`  Remitly error: ${e.message.slice(0,60)}`); }
-  finally { await page.close(); }
-  return results;
-}
+      }
+    } catch {}
+    await new Promise(r => setTimeout(r, 400));
+  }
 
-// ── WESTERN UNION ──────────────────────────────────────────
-async function scrapeWesternUnion(browser) {
-  const page = await newPage(browser);
-  const results = {};
-  const targets = [
-    { corridor:"INR", toCountry:"IN", toCurrency:"INR" },
-    { corridor:"PHP", toCountry:"PH", toCurrency:"PHP" },
-    { corridor:"PKR", toCountry:"PK", toCurrency:"PKR" },
-    { corridor:"BDT", toCountry:"BD", toCurrency:"BDT" },
-    { corridor:"NPR", toCountry:"NP", toCurrency:"NPR" },
-    { corridor:"LKR", toCountry:"LK", toCurrency:"LKR" },
-    { corridor:"EGP", toCountry:"EG", toCurrency:"EGP" },
-  ];
-  try {
-    for (const t of targets) {
-      try {
-        // WU price estimation API
-        const url = `https://www.westernunion.com/us/en/send-money/app/price-estimation?fromCountry=AE&toCountry=${t.toCountry}&amount=1000&amountCurrencyCountry=AE&toCurrency=${t.toCurrency}`;
-        await page.goto(url, { waitUntil:"domcontentloaded", timeout:20000 });
-        await page.waitForTimeout(2000);
-        const content = await page.content();
-        const match = content.match(/"exchangeRate"\s*:\s*([\d.]+)/) ||
-                      content.match(/exchangeRate['":\s]+([\d.]+)/i);
-        if (match) {
-          const rate = parseRate(match[1]);
-          if (rate) results[t.corridor] = rate;
-        }
-      } catch {}
-      await page.waitForTimeout(1200);
-    }
-    console.log(`  Western Union: ${Object.keys(results).join(", ") || "none"}`);
-  } catch (e) { console.log(`  WU error: ${e.message.slice(0,60)}`); }
-  finally { await page.close(); }
+  console.log(`  Western Union: ${Object.keys(results).join(", ") || "none"}`);
   return results;
 }
 
@@ -309,7 +384,7 @@ function saveResults(providerId, results, fee = 0) {
   }
 }
 
-// ── SCRAPERS REGISTRY ──────────────────────────────────────
+// ── REGISTRY ───────────────────────────────────────────────
 const SCRAPERS = [
   { id:"al_ansari",    name:"Al Ansari Exchange",  fee:0,    fn:scrapeAlAnsari    },
   { id:"lulu_exchange",name:"LuLu Exchange",        fee:0,    fn:scrapeLuLu        },
@@ -325,36 +400,25 @@ const SCRAPERS = [
 async function runAllScrapers() {
   console.log(`\n[${new Date().toISOString()}] Starting scrape run...`);
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-web-security",
-      "--disable-features=IsolateOrigins,site-per-process",
-    ],
-  });
-
   for (const scraper of SCRAPERS) {
     console.log(`\n→ Scraping ${scraper.name}...`);
     try {
-      const results = await scraper.fn(browser);
+      const results = await scraper.fn();
       saveResults(scraper.id, results, scraper.fee);
     } catch (err) {
-      console.log(`  ❌ ${scraper.name} crashed: ${err.message.slice(0,80)}`);
-      saveResults(scraper.id, {}, scraper.fee); // save fallbacks
+      console.log(`  ❌ ${scraper.name}: ${err.message.slice(0,80)}`);
+      saveResults(scraper.id, {}, scraper.fee);
     }
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 1000));
   }
 
-  await browser.close();
   console.log(`\n✅ Scrape run complete\n`);
 }
 
 if (require.main === module) {
-  runAllScrapers().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });
+  runAllScrapers()
+    .then(() => process.exit(0))
+    .catch(e => { console.error(e); process.exit(1); });
 }
 
 module.exports = { runAllScrapers };
