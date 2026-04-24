@@ -1,0 +1,11 @@
+# ============================================================
+# railway.toml — Railway deployment configuration
+# ============================================================
+[build]
+# Install Playwright's Chromium browser during build
+buildCommand = "npm install && npx playwright install chromium --with-deps"
+
+[deploy]
+startCommand = "npm start"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

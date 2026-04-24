@@ -1,41 +1,22 @@
 // ============================================================
-// HAWLA — Backend Server (server/index.js)
+// HAWLA — server/index.js
 // ============================================================
-// What this does:
-//   1. Serves the frontend (public/ folder)
-//   2. Accepts alert subscriptions via POST /api/alerts
-//   3. Stores subscribers in memory (upgrade to DB later)
-//   4. Runs a cron job every 30 min to check if rates changed
-//      and WhatsApps any subscriber whose corridor rate improved
-//
-// HOW TO RUN:
-//   1. cp .env.example .env  (fill in your Twilio keys)
-//   2. npm install
-//   3. npm run dev            (development, auto-restarts)
-//   4. npm start              (production)
-//
-// TWILIO SETUP (free sandbox works fine to start):
-//   1. Sign up at twilio.com
-//   2. Go to Messaging > Try it Out > Send a WhatsApp message
-//   3. Follow the sandbox instructions
-//   4. Paste your SID, Auth Token, and sandbox number into .env
-// ============================================================
-
 require("dotenv").config();
 
-const express = require("express");
-const cors    = require("cors");
-const cron    = require("node-cron");
-const path    = require("path");
-const twilio  = require("twilio");
+const express  = require("express");
+const cors     = require("cors");
+const cron     = require("node-cron");
+const path     = require("path");
+const twilio   = require("twilio");
+const db       = require("./db");
+const { runAllScrapers } = require("./scraper");
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// ── Twilio client (only if keys are set) ──────────────────
+// ── Twilio ─────────────────────────────────────────────────
 const twilioEnabled =
-  process.env.TWILIO_ACCOUNT_SID &&
-  process.env.TWILIO_ACCOUNT_SID.startsWith("AC") &&
+  process.env.TWILIO_ACCOUNT_SID?.startsWith("AC") &&
   process.env.TWILIO_AUTH_TOKEN;
 
 const twilioClient = twilioEnabled
@@ -43,124 +24,92 @@ const twilioClient = twilioEnabled
   : null;
 
 if (!twilioEnabled) {
-  console.log("⚠  Twilio not configured — WhatsApp alerts will be logged only.");
-  console.log("   Add keys to .env to enable real messages.\n");
+  console.log("⚠  Twilio not configured — alerts will be logged only.");
 }
 
-// ── In-memory subscriber store ────────────────────────────
-// Shape: [{ phone, corridor, amount, bestRateAtSignup, lang, createdAt }]
-// TODO: Replace with SQLite or PostgreSQL when you have 100+ subscribers
-const subscribers = [];
+// ── Provider metadata ──────────────────────────────────────
+const PROVIDER_META = {
+  al_ansari:     { name:"Al Ansari Exchange",  logo:"AA", color:"#1B4B8A", textColor:"#fff", link:"https://alansariexchange.com",  type:"exchange_house", speed:{en:"Same day",      hi:"उसी दिन",    tl:"Parehong araw", ur:"اسی دن"    }},
+  lulu_exchange: { name:"LuLu Exchange",        logo:"LL", color:"#E31837", textColor:"#fff", link:"https://luluexchange.com",       type:"exchange_house", speed:{en:"Same day",      hi:"उसी दिन",    tl:"Parehong araw", ur:"اسی دن"    }},
+  al_fardan:     { name:"Al Fardan Exchange",   logo:"AF", color:"#006B3F", textColor:"#fff", link:"https://alfardanexchange.com",   type:"exchange_house", speed:{en:"Same day",      hi:"उसी दिन",    tl:"Parehong araw", ur:"اسی دن"    }},
+  wall_street:   { name:"Wall Street Exchange", logo:"WS", color:"#2C2C54", textColor:"#fff", link:"https://wallstreetexchange.com", type:"exchange_house", speed:{en:"Same day",      hi:"उसी दिन",    tl:"Parehong araw", ur:"اسی دن"    }},
+  sharaf:        { name:"Sharaf Exchange",      logo:"SE", color:"#7B3F00", textColor:"#fff", link:"https://sharafexchange.com",    type:"exchange_house", speed:{en:"Same day",      hi:"उसी दिन",    tl:"Parehong araw", ur:"اسی دن"    }},
+  wise:          { name:"Wise",                  logo:"W",  color:"#9FE870", textColor:"#163300", link:"https://wise.com",          type:"digital",        speed:{en:"Instant–1 day", hi:"तुरंत–1 दिन", tl:"Instant–1 araw",ur:"فوری–1 دن"  }},
+  remitly:       { name:"Remitly",              logo:"R",  color:"#FF6B35", textColor:"#fff", link:"https://remitly.com",           type:"digital",        speed:{en:"Minutes–3 days",hi:"मिनट–3 दिन",  tl:"Minuto–3 araw", ur:"منٹ–3 دن"   }},
+  western_union: { name:"Western Union",        logo:"WU", color:"#FFDD00", textColor:"#333", link:"https://westernunion.com",      type:"digital",        speed:{en:"Minutes",       hi:"मिनट में",   tl:"Sa loob ng minuto",ur:"منٹوں میں"}},
+};
 
-// ── Snapshot of "last seen" rates per corridor ────────────
-// Used to detect when a rate improves so we only alert on changes
-const lastRates = {}; // { INR: 23.75, PHP: 14.61, ... }
-
-// ── Middleware ────────────────────────────────────────────
+// ── Middleware ─────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
-
-// Serve the frontend
 app.use(express.static(path.join(__dirname, "../public")));
 
 // ============================================================
 // API ROUTES
 // ============================================================
 
-// GET /api/rates — returns current rates (for future auto-update)
+// GET /api/rates
 app.get("/api/rates", (req, res) => {
-  // Require rates.js from the public folder
-  // We use delete require.cache so changes are picked up without restart
-  delete require.cache[require.resolve("../public/rates.js")];
-  const { PROVIDERS, CORRIDORS, LAST_UPDATED } = require("../public/rates.js");
-  res.json({ PROVIDERS, CORRIDORS, LAST_UPDATED });
+  try {
+    const rows = db.getAllLatestRates();
+    const byCorridors = {};
+    rows.forEach(row => {
+      if (!byCorridors[row.corridor]) byCorridors[row.corridor] = [];
+      const meta = PROVIDER_META[row.provider_id] || {};
+      byCorridors[row.corridor].push({
+        provider_id: row.provider_id,
+        ...meta,
+        rate:       row.rate,
+        fee:        row.fee,
+        scraped_at: row.scraped_at,
+      });
+    });
+    const lastRow     = rows[rows.length - 1];
+    const lastUpdated = lastRow
+      ? new Date(lastRow.scraped_at).toLocaleString("en-AE", { timeZone:"Asia/Dubai" })
+      : "Not yet scraped";
+    res.json({ ok:true, lastUpdated, corridors: byCorridors });
+  } catch (err) {
+    res.status(500).json({ ok:false, error: err.message });
+  }
 });
 
-// POST /api/alerts — subscribe a phone number to rate alerts
+// POST /api/alerts
 app.post("/api/alerts", (req, res) => {
   const { phone, corridor, amount, bestRate, lang } = req.body;
-
-  // ── Validation ──
-  if (!phone || !corridor) {
-    return res.status(400).json({ error: "phone and corridor are required" });
-  }
-
+  if (!phone || !corridor) return res.status(400).json({ error:"phone and corridor required" });
   const clean = phone.replace(/\s/g, "");
-  if (!/^\+\d{7,15}$/.test(clean)) {
-    return res.status(400).json({ error: "Invalid phone number format" });
-  }
-
-  const validCorridors = ["INR","PHP","PKR","BDT","NPR","LKR","EGP"];
-  if (!validCorridors.includes(corridor)) {
-    return res.status(400).json({ error: "Invalid corridor" });
-  }
-
-  // ── Deduplicate (same phone + corridor) ──
-  const exists = subscribers.find(
-    s => s.phone === clean && s.corridor === corridor
-  );
-
-  if (exists) {
-    console.log(`ℹ  Existing subscriber updated: ${clean} (${corridor})`);
-    exists.amount           = amount;
-    exists.bestRateAtSignup = bestRate;
-    exists.lang             = lang || "en";
-  } else {
-    subscribers.push({
-      phone:           clean,
-      corridor,
-      amount:          amount || 1000,
-      bestRateAtSignup: bestRate,
-      lang:            lang || "en",
-      createdAt:       new Date().toISOString(),
-    });
-    console.log(`✅ New subscriber: ${clean} → ${corridor} (total: ${subscribers.length})`);
-  }
-
-  // ── Send confirmation WhatsApp ──
-  sendWhatsApp(
-    clean,
-    buildConfirmationMessage(clean, corridor, bestRate, lang || "en")
-  );
-
-  res.json({ ok: true, total: subscribers.length });
+  if (!/^\+\d{7,15}$/.test(clean)) return res.status(400).json({ error:"Invalid phone" });
+  const valid = ["INR","PHP","PKR","BDT","NPR","LKR","EGP"];
+  if (!valid.includes(corridor)) return res.status(400).json({ error:"Invalid corridor" });
+  db.upsertSubscriber(clean, corridor, amount||1000, bestRate, lang||"en");
+  console.log(`✅ Subscriber: ${maskPhone(clean)} → ${corridor}`);
+  sendWhatsApp(clean, buildConfirmMessage(corridor, bestRate, lang||"en"));
+  res.json({ ok:true });
 });
 
-// GET /api/subscribers — admin view of all subscribers
-// TODO: Protect this with a secret key before going public
+// GET /api/subscribers
 app.get("/api/subscribers", (req, res) => {
-  res.json({
-    count: subscribers.length,
-    subscribers: subscribers.map(s => ({
-      phone:     maskPhone(s.phone),
-      corridor:  s.corridor,
-      createdAt: s.createdAt,
-    })),
-  });
+  const all = db.getAllSubscribers();
+  res.json({ count:all.length, subscribers:all.map(s=>({ phone:maskPhone(s.phone), corridor:s.corridor, createdAt:s.created_at })) });
 });
 
+// GET /api/test-whatsapp
 app.get("/api/test-whatsapp", async (req, res) => {
   const testPhone = process.env.TEST_PHONE;
-
-  if (!testPhone) {
-    return res.status(400).json({
-      error: "TEST_PHONE not set in .env",
-      fix: "Add TEST_PHONE=+971500000000 to your .env file"
-    });
-  }
-
-  const message = `✅ *Hawla test message*\n\nYour WhatsApp alerts are working!\n\nServer time: ${new Date().toISOString()}\nSubscribers so far: ${subscribers.length}\n\n🚀 Ready to launch.`;
-
-  await sendWhatsApp(testPhone, message);
-
-  res.json({
-    ok: true,
-    sentTo: maskPhone(testPhone),
-    message: "Check your WhatsApp — message sent!"
-  });
+  if (!testPhone) return res.status(400).json({ error:"TEST_PHONE not set" });
+  const subs = db.getAllSubscribers().length;
+  await sendWhatsApp(testPhone, `✅ *Hawla test*\n\nEverything working!\nSubscribers: ${subs}\nTime: ${new Date().toISOString()}`);
+  res.json({ ok:true, sentTo:maskPhone(testPhone) });
 });
 
-// ── Catch-all: serve index.html for any unknown route ──
+// GET /api/scrape — manually trigger scrape
+app.get("/api/scrape", async (req, res) => {
+  res.json({ ok:true, message:"Scrape started — check server logs" });
+  runAllScrapers().then(checkAndAlert).catch(console.error);
+});
+
+// Catch-all
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "../public/index.html"));
 });
@@ -168,129 +117,83 @@ app.get("*", (req, res) => {
 // ============================================================
 // WHATSAPP HELPERS
 // ============================================================
-
 async function sendWhatsApp(to, message) {
   if (!twilioClient) {
-    console.log(`📱 [WhatsApp would send to ${maskPhone(to)}]:\n${message}\n`);
+    console.log(`📱 [WhatsApp → ${maskPhone(to)}]:\n${message}\n`);
     return;
   }
-
   try {
     const msg = await twilioClient.messages.create({
       from: process.env.TWILIO_WHATSAPP_FROM,
       to:   `whatsapp:${to}`,
       body: message,
     });
-    console.log(`✅ WhatsApp sent to ${maskPhone(to)} [SID: ${msg.sid}]`);
+    console.log(`✅ WhatsApp sent [${msg.sid}]`);
   } catch (err) {
-    console.error(`❌ WhatsApp failed to ${maskPhone(to)}:`, err.message);
+    console.error(`❌ WhatsApp failed: ${err.message}`);
   }
 }
 
-function buildConfirmationMessage(phone, corridor, rate, lang) {
+function buildConfirmMessage(corridor, rate, lang) {
   const msgs = {
-    en: `🏦 *Hawla* — You're now subscribed!\n\nWe'll message you when the *AED → ${corridor}* rate improves above ${rate ? rate.toFixed(2) : "today's best"}.\n\nReply STOP to unsubscribe.`,
-    hi: `🏦 *Hawla* — आपका सब्सक्रिप्शन हो गया!\n\nजब *AED → ${corridor}* रेट ${rate ? rate.toFixed(2) : "आज के सबसे अच्छे"} से ऊपर जाएगा, हम WhatsApp करेंगे।\n\nबंद करने के लिए STOP लिखें।`,
-    tl: `🏦 *Hawla* — Naka-subscribe ka na!\n\nIpapadala namin ang mensahe kapag bumuti ang *AED → ${corridor}* rate.\n\nI-reply ang STOP para mag-unsubscribe.`,
-    ur: `🏦 *Hawla* — آپ کی سبسکرپشن ہو گئی!\n\n*AED → ${corridor}* ریٹ بہتر ہونے پر ہم آپ کو WhatsApp کریں گے۔\n\nبند کرنے کے لیے STOP لکھیں۔`,
+    en: `🏦 *Hawla* — You're subscribed!\n\nWe'll alert you when AED → ${corridor} improves above ${rate?.toFixed(2)||"today's best"}.\n\nReply STOP to unsubscribe.`,
+    hi: `🏦 *Hawla* — सब्सक्रिप्शन हो गया!\n\nAED → ${corridor} रेट बेहतर होने पर WhatsApp करेंगे।\n\nSTOP लिखें बंद करने के लिए।`,
+    tl: `🏦 *Hawla* — Naka-subscribe ka!\n\nWhatsApp ka namin kapag bumuti ang AED → ${corridor}.\n\nI-reply STOP para mag-unsubscribe.`,
+    ur: `🏦 *Hawla* — سبسکرپشن ہو گئی!\n\nAED → ${corridor} ریٹ بہتر ہونے پر WhatsApp کریں گے۔\n\nSTOP لکھیں بند کرنے کے لیے۔`,
   };
-  return msgs[lang] || msgs.en;
+  return msgs[lang]||msgs.en;
 }
 
-function buildAlertMessage(sub, newRate, oldRate, corridor) {
-  const improvement = ((newRate - oldRate) / oldRate * 100).toFixed(2);
-  const nowReceives = Math.round(sub.amount * newRate);
-
+function buildAlertMessage(sub, newRate, oldRate) {
+  const pct      = ((newRate-oldRate)/oldRate*100).toFixed(2);
+  const receives = Math.round(sub.amount*newRate);
   const msgs = {
-    en: `📈 *Hawla Rate Alert!*\n\nAED → ${corridor} just improved!\n\n• Old rate: ${oldRate.toFixed(2)}\n• New rate: *${newRate.toFixed(2)}* (+${improvement}%)\n• Send AED ${sub.amount} → receive *~${nowReceives.toLocaleString()}*\n\nCheck best provider: https://hawla.ae\n\nReply STOP to unsubscribe.`,
-    hi: `📈 *Hawla रेट अलर्ट!*\n\nAED → ${corridor} रेट बेहतर हुआ!\n\n• पुराना रेट: ${oldRate.toFixed(2)}\n• नया रेट: *${newRate.toFixed(2)}* (+${improvement}%)\n• AED ${sub.amount} भेजें → *~${nowReceives.toLocaleString()}* मिलेगा\n\nhttps://hawla.ae\n\nSTOP लिखें बंद करने के लिए।`,
-    tl: `📈 *Hawla Rate Alert!*\n\nAED → ${corridor} bumuti na!\n\n• Dati: ${oldRate.toFixed(2)}\n• Bago: *${newRate.toFixed(2)}* (+${improvement}%)\n• Magpadala ng AED ${sub.amount} → tatanggap ng *~${nowReceives.toLocaleString()}*\n\nhttps://hawla.ae`,
-    ur: `📈 *Hawla ریٹ الرٹ!*\n\nAED → ${corridor} ریٹ بہتر ہوا!\n\n• پرانا ریٹ: ${oldRate.toFixed(2)}\n• نیا ریٹ: *${newRate.toFixed(2)}* (+${improvement}%)\n• AED ${sub.amount} بھیجیں → *~${nowReceives.toLocaleString()}* ملے گا\n\nhttps://hawla.ae`,
+    en: `📈 *Hawla Rate Alert!*\n\nAED → ${sub.corridor} improved!\n• Old: ${oldRate.toFixed(2)}\n• New: *${newRate.toFixed(2)}* (+${pct}%)\n• AED ${sub.amount} → *~${receives.toLocaleString()}*\n\nhttps://hawla.ae`,
+    hi: `📈 *Hawla रेट अलर्ट!*\n\nAED → ${sub.corridor} बेहतर!\n• पुराना: ${oldRate.toFixed(2)}\n• नया: *${newRate.toFixed(2)}* (+${pct}%)\n• AED ${sub.amount} → *~${receives.toLocaleString()}*\n\nhttps://hawla.ae`,
+    tl: `📈 *Hawla Alert!*\n\nAED → ${sub.corridor} bumuti!\n• Dati: ${oldRate.toFixed(2)}\n• Bago: *${newRate.toFixed(2)}* (+${pct}%)\n• AED ${sub.amount} → *~${receives.toLocaleString()}*\n\nhttps://hawla.ae`,
+    ur: `📈 *Hawla الرٹ!*\n\nAED → ${sub.corridor} بہتر!\n• پرانا: ${oldRate.toFixed(2)}\n• نیا: *${newRate.toFixed(2)}* (+${pct}%)\n• AED ${sub.amount} → *~${receives.toLocaleString()}*\n\nhttps://hawla.ae`,
   };
-  return msgs[sub.lang] || msgs.en;
+  return msgs[sub.lang]||msgs.en;
 }
 
-function maskPhone(phone) {
-  return phone.slice(0, 4) + "****" + phone.slice(-3);
-}
+function maskPhone(p) { return p.slice(0,4)+"****"+p.slice(-3); }
 
 // ============================================================
-// CRON JOB — Rate change detection & alert dispatch
-// Runs every 30 minutes. Checks current rates against last
-// seen rates. If a corridor improved, alerts all subscribers.
+// ALERT CHECKER
 // ============================================================
-
-function getBestRateForCorridor(corridor) {
-  // Reload rates fresh each time (picks up manual updates)
-  delete require.cache[require.resolve("../public/rates.js")];
-  const { PROVIDERS } = require("../public/rates.js");
-
-  let best = 0;
-  PROVIDERS.forEach(p => {
-    const rd = p.rates?.[corridor];
-    if (rd) {
-      // Effective rate = (1000 - fee) * rate / 1000 — normalised to 1 AED
-      const effective = (1000 - rd.fee) * rd.rate / 1000;
-      if (effective > best) best = effective;
-    }
-  });
-  return best;
-}
-
-function checkAndAlert() {
-  const corridors = ["INR","PHP","PKR","BDT","NPR","LKR","EGP"];
-
-  corridors.forEach(corridor => {
-    const current = getBestRateForCorridor(corridor);
-    const previous = lastRates[corridor];
-
-    if (previous === undefined) {
-      // First run — just record, don't alert
-      lastRates[corridor] = current;
-      return;
-    }
-
-    // Rate improved by at least 0.05% — alert subscribers
-    const improvement = (current - previous) / previous;
+async function checkAndAlert() {
+  const bestRates = db.getBestRatePerCorridor();
+  for (const { corridor, effective_rate } of bestRates) {
+    const snapshot = db.getSnapshot(corridor);
+    if (!snapshot) { db.saveSnapshot(corridor, effective_rate); continue; }
+    const improvement = (effective_rate - snapshot.best_rate) / snapshot.best_rate;
     if (improvement >= 0.0005) {
-      console.log(`📈 Rate improved for ${corridor}: ${previous.toFixed(4)} → ${current.toFixed(4)}`);
-
-      const affected = subscribers.filter(s => s.corridor === corridor);
-      if (affected.length === 0) return;
-
-      console.log(`   Notifying ${affected.length} subscriber(s)...`);
-
-      affected.forEach(sub => {
-        const msg = buildAlertMessage(sub, current, previous, corridor);
-        sendWhatsApp(sub.phone, msg);
-        // Update their reference rate so they don't get spammed
-        sub.bestRateAtSignup = current;
-      });
-
-      lastRates[corridor] = current;
-    } else {
-      // Rate same or worse — just update snapshot
-      lastRates[corridor] = current;
+      console.log(`📈 ${corridor}: ${snapshot.best_rate.toFixed(4)} → ${effective_rate.toFixed(4)}`);
+      const subs = db.getSubscribersByCorridors([corridor]);
+      for (const sub of subs) {
+        await sendWhatsApp(sub.phone, buildAlertMessage(sub, effective_rate, snapshot.best_rate));
+        db.updateSubscriberRate(sub.phone, corridor, effective_rate);
+      }
     }
-  });
+    db.saveSnapshot(corridor, effective_rate);
+  }
 }
 
-// Run every 30 minutes: "*/30 * * * *"
-// Run every minute for testing: "* * * * *"
-cron.schedule("*/30 * * * *", () => {
-  console.log(`[${new Date().toISOString()}] Checking rates...`);
-  checkAndAlert();
+// ============================================================
+// CRON — every 30 minutes
+// ============================================================
+cron.schedule("*/30 * * * *", async () => {
+  console.log(`[${new Date().toISOString()}] Cron scrape starting...`);
+  try { await runAllScrapers(); await checkAndAlert(); }
+  catch (err) { console.error("Cron error:", err.message); }
 });
 
 // ============================================================
 // START
 // ============================================================
-app.listen(PORT, () => {
-  console.log(`\n🚀 Hawla server running at http://localhost:${PORT}`);
-  console.log(`   Frontend: http://localhost:${PORT}`);
-  console.log(`   Rates API: http://localhost:${PORT}/api/rates`);
-  console.log(`   Subscribers: http://localhost:${PORT}/api/subscribers\n`);
-
-  // Initial rate snapshot
-  checkAndAlert();
+app.listen(PORT, async () => {
+  console.log(`\n🚀 Hawla running at http://localhost:${PORT}`);
+  console.log(`   /api/rates · /api/scrape · /api/test-whatsapp · /api/subscribers\n`);
+  try { await runAllScrapers(); await checkAndAlert(); }
+  catch (err) { console.error("Initial scrape error:", err.message); }
 });
