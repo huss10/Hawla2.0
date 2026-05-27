@@ -7,10 +7,15 @@ Hawla scrapes live rates every 30 minutes, compares them side-by-side, and sends
 Stack
 
 Backend: Node.js + Express
+
 Scheduling: node-cron (30-minute scrape interval)
+
 Alerts: Twilio WhatsApp Business API
+
 Storage: Lightweight SQLite layer (server/db.js)
+
 Frontend: Single-file vanilla HTML/JS (public/index.html) — fast, no build step
+
 Deploy: Railway
 
 Supported corridors
