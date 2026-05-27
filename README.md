@@ -13,21 +13,10 @@ Storage: Lightweight SQLite layer (server/db.js)
 Frontend: Single-file vanilla HTML/JS (public/index.html) — fast, no build step
 Deploy: Railway
 
-Architecture
-┌────────────────────────────────────────────────────┐
-│  Cron (every 30 min)                               │
-│    ↓                                               │
-│  runAllScrapers() → fetch rates from 8 providers   │
-│    ↓                                               │
-│  checkAndAlert() → diff vs last snapshot           │
-│    ↓                                               │
-│  Twilio WhatsApp → subscribed users (localized)    │
-└────────────────────────────────────────────────────┘
-
-┌────────────────────────────────────────────────────┐
-│  Frontend → /api/rates → live comparison table     │
-│  Frontend → /api/alerts → subscribe to corridor    │
-└────────────────────────────────────────────────────┘
+Supported corridors
+INR (India) · PHP (Philippines) · PKR (Pakistan) · BDT (Bangladesh) · NPR (Nepal) · LKR (Sri Lanka) · EGP (Egypt)
+Supported providers
+Al Ansari Exchange · LuLu Exchange · Al Fardan Exchange · Wall Street Exchange · Sharaf Exchange · Wise · Remitly · Western Union
 
 
 ## What's in this repo
