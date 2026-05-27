@@ -6,12 +6,12 @@ Hawla is a side project I built to solve a real problem in the UAE: migrant work
 Hawla scrapes live rates every 30 minutes, compares them side-by-side, and sends a WhatsApp alert when the rate for a user's chosen corridor improves. Available in English, Hindi, Tagalog, and Urdu — the four largest remittance-sending communities in the UAE.
 Stack
 
-# Backend: Node.js + Express
-# Scheduling: node-cron (30-minute scrape interval)
-# Alerts: Twilio WhatsApp Business API
-# Storage: Lightweight SQLite layer (server/db.js)
-# Frontend: Single-file vanilla HTML/JS (public/index.html) — fast, no build step
-# Deploy: Railway
+Backend: Node.js + Express
+Scheduling: node-cron (30-minute scrape interval)
+Alerts: Twilio WhatsApp Business API
+Storage: Lightweight SQLite layer (server/db.js)
+Frontend: Single-file vanilla HTML/JS (public/index.html) — fast, no build step
+Deploy: Railway
 
 Supported corridors
 INR (India) · PHP (Philippines) · PKR (Pakistan) · BDT (Bangladesh) · NPR (Nepal) · LKR (Sri Lanka) · EGP (Egypt)
